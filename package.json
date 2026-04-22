@@ -1,0 +1,26 @@
+{
+  "name": "cursed-clash-bot",
+  "version": "1.0.0",
+  "description": "Jujutsu Kaisen: Cursed Clash - a 3v3 Pokemon-style Telegram RPG.",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "nedb-promises": "^6.2.3",
+    "node-fetch": "^2.7.0",
+    "sharp": "^0.34.5",
+    "telegraf": "^4.16.3"
+  },
+  "optionalDependencies": {
+    "@img/sharp-libvips-linux-arm64": "^1.0.4",
+    "@img/sharp-libvips-linux-x64": "^1.0.4",
+    "@img/sharp-linux-arm64": "^0.34.5",
+    "@img/sharp-linux-x64": "^0.34.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
