@@ -60,6 +60,29 @@ const getMaintenance = async () => {
 
 bot.use(session());
 
+// --- AUTO-REPLY MIDDLEWARE ---
+// This makes every command automatically reply/quote the user's message
+bot.use((ctx, next) => {
+    if (ctx.message && ctx.message.message_id) {
+        
+        const originalReply = ctx.reply.bind(ctx);
+        const originalReplyWithHTML = ctx.replyWithHTML.bind(ctx);
+        const originalReplyWithPhoto = ctx.replyWithPhoto.bind(ctx);
+
+        const injectReplyQuote = (extra = {}) => {
+            return {
+                ...extra,
+                reply_parameters: { message_id: ctx.message.message_id }
+            };
+        };
+
+        ctx.reply = (text, extra) => originalReply(text, injectReplyQuote(extra));
+        ctx.replyWithHTML = (html, extra) => originalReplyWithHTML(html, injectReplyQuote(extra));
+        ctx.replyWithPhoto = (photo, extra) => originalReplyWithPhoto(photo, injectReplyQuote(extra));
+    }
+    return next();
+});
+
 // --- IGNORE OLD UPDATES ---
 bot.use((ctx, next) => {
     if (ctx.updateType === 'message' || ctx.updateType === 'callback_query') {
