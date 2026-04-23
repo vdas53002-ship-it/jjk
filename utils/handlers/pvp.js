@@ -6,15 +6,18 @@ const db = require('../../database');
 const characters = require('../data/characters');
 const media = require('../media');
 
-/**
- * PvP Handler: Manages live matches between two human players.
- */
 module.exports = {
     async handleQueue(ctx, isCasual = false) {
         const user = ctx.state.user;
         if (!user) return ctx.reply("Please /start first.");
         
-        // 1. Join Matchmaking
+        if (!isCasual) {
+            if ((user.stamina || 0) < 10) {
+                return ctx.reply("❌ Insufficient Stamina! Ranked matches require 🔋 10 Stamina.");
+            }
+            await db.users.update({ telegramId: user.telegramId }, { $inc: { stamina: -10 } });
+        }
+
         const result = await matchmaking.joinQueue(user, isCasual);
         
         if (result.error) {
@@ -27,7 +30,7 @@ module.exports = {
         const range = isCasual ? "±200" : "±100";
 
         const msg = ui.formatHeader(`🎮 ${mode} MATCH – SEARCHING`) + "\n\n" +
-            `🔍 <b>Searching for opponent...</b>\n` +
+            `🔍 Searching for opponent...\n` +
             `Your ${scoreLabel}: <code>${scoreValue}</code>\n` +
             `Looking for ${scoreLabel} ${range}...\n\n` +
             `<i>Searching typically takes 5-30 seconds.</i>`;
@@ -45,16 +48,12 @@ module.exports = {
         return ctx.editMessageText("❌ Matchmaking canceled. Return to the hub to try again.", { parse_mode: 'HTML' });
     },
 
-    /**
-     * Triggered by matchmaking.js when two players are paired.
-     */
-    async startPvPBattle(p1, p2, mode, bot) {
+    async startPvPBattle(p1, p2, mode, bot, chatId = null) {
         const u1 = await db.users.findOne({ telegramId: p1.userId });
         const u2 = await db.users.findOne({ telegramId: p2.userId });
         const r1 = await db.roster.find({ userId: p1.userId });
         const r2 = await db.roster.find({ userId: p2.userId });
 
-        // Helper to hydrate team with Clan Buffs
         const hydrateTeam = (user, roster, clan = null) => {
             let clanMult = 1.0;
             if (clan && clan.leaderId === user.telegramId) {
@@ -77,17 +76,19 @@ module.exports = {
             { telegramId: u2.telegramId, username: u2.username, teamMembers: hydrateTeam(u2, r2, u2_clan) }
         );
 
-        battle.mode = mode; // 'casual' or 'ranked'
+        battle.mode = mode; // 'casual' or 'ranked' or 'duel'
         battle.status = 'active';
         battle.p1Choice = null;
         battle.p2Choice = null;
+        battle.chatId = chatId; // For live GC updates
+        battle.lastActionAt = Date.now(); 
 
         const inserted = await db.battles.insert(battle);
         const battleId = inserted._id;
 
         // Notify both players
         const msg = ui.formatHeader(`${mode.toUpperCase()} CLASH`, "BATTLE") + "\n\n" +
-            `💥 <b>CHALLENGER APPROACHES!</b>\n\n` +
+            `💥 CHALLENGER APPROACHES!\n\n` +
             `   ⚔️ @${u1.username} vs @${u2.username}\n\n` +
             "<i>Prepare your cursed techniques...</i>";
 
@@ -96,6 +97,13 @@ module.exports = {
         try {
             await bot.telegram.sendMessage(u1.telegramId, msg, { parse_mode: 'HTML', ...kb });
             await bot.telegram.sendMessage(u2.telegramId, msg, { parse_mode: 'HTML', ...kb });
+            
+            if (chatId) {
+                const gcMsg = await bot.telegram.sendMessage(chatId, ui.formatHeader("🔥 LIVE DUEL BEGINS") + "\n\n" +
+                    `⚔️ <a href="tg://user?id=${u1.telegramId}">${u1.username}</a> vs <a href="tg://user?id=${u2.telegramId}">${u2.username}</a>\n\n` +
+                    `<i>Spectators, witness the clash!</i>`, { parse_mode: 'HTML' });
+                await db.battles.update({ _id: battleId }, { $set: { groupMessageId: gcMsg.message_id } });
+            }
         } catch (e) {
             console.error("Match notification error:", e);
         }
@@ -108,8 +116,7 @@ module.exports = {
         const isP1 = ctx.from.id === battle.p1.id;
         const msgKey = isP1 ? 'p1Mid' : 'p2Mid';
         
-        // Save messageId to battle for live updates
-        await db.battles.update({ _id: battleId }, { $set: { [msgKey]: ctx.callbackQuery.message.message_id } });
+        await db.battles.update({ _id: battleId }, { $set: { [msgKey]: ctx.callbackQuery.message.message_id, lastActionAt: Date.now() } });
         
         await ctx.answerCbQuery().catch(() => null);
         return this.renderBattle(ctx,  { ...battle, [msgKey]: ctx.callbackQuery.message.message_id });
@@ -127,13 +134,13 @@ module.exports = {
 
         if (battle.status === 'finished') {
             const winnerId = battle.winnerId;
-            const resultMsg = winnerId === ctx.from.id ? "\n\n🎉 <b>VICTORY!</b> Match concluded." : "\n\n💀 <b>DEFEAT!</b> Soul dissipated.";
+            const resultMsg = winnerId === ctx.from.id ? "\n\n🎉 VICTORY! Match concluded." : "\n\n💀 DEFEAT! Soul dissipated.";
             return ctx.telegram.editMessageCaption(ctx.chat.id, msgId, null, msg + resultMsg, { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Return to Hub', 'back_to_hub')]]) }).catch(() => null);
         }
 
         const hasActed = isP1 ? !!battle.p1Choice : !!battle.p2Choice;
         if (hasActed) {
-            return ctx.telegram.editMessageCaption(ctx.chat.id, msgId, null, msg + "\n⏳ <b>Waiting for opponent...</b>", { parse_mode: 'HTML' }).catch(() => null);
+            return ctx.telegram.editMessageCaption(ctx.chat.id, msgId, null, msg + "\n⏳ Waiting for opponent...", { parse_mode: 'HTML' }).catch(() => null);
         }
 
         const moveButtons = myActive.moves.map((m, i) => {
@@ -160,9 +167,14 @@ module.exports = {
 
     async handleMove(ctx, battleId, moveData) {
         const battle = await db.battles.findOne({ _id: battleId });
-        if (!battle || battle.status !== 'active' || battle.processing) return ctx.answerCbQuery("Battle busy or ended.");
+        if (!battle) return ctx.answerCbQuery("Battle not found.");
+        if (battle.status !== 'active') return ctx.answerCbQuery("Battle has already ended.");
+        if (battle.processing) return ctx.answerCbQuery("⏳ Processing turn... Please wait.");
 
         const isP1 = ctx.from.id === battle.p1.id;
+        const isP2 = ctx.from.id === battle.p2.id;
+        if (!isP1 && !isP2) return ctx.answerCbQuery("🚫 You are not a participant in this clash!", { show_alert: true });
+
         const choiceKey = isP1 ? 'p1Choice' : 'p2Choice';
         
         if (battle[choiceKey]) return ctx.answerCbQuery("Action already locked!");
@@ -188,12 +200,10 @@ module.exports = {
         const bot = ctx.telegram;
 
         try {
-            // 1. Get ordering
             const actors = engine.getOrderedActors(battle, p1Choice, p2Choice);
             battle.p1Choice = null;
             battle.p2Choice = null;
             
-            // 2. Process actions one by one
             for (let i = 0; i < actors.length; i++) {
                 const actor = actors[i];
                 const logs = engine.processAction(battle, actor);
@@ -205,8 +215,10 @@ module.exports = {
                         const isLast = (i === actors.length - 1) && (battle.status === 'finished' || engine.postTurnCleanup(JSON.parse(JSON.stringify(battle))).length === 0);
                         
                         if (!isLast) {
-                            await this.pushUpdate(bot, battle, battle.p1.id, battle.p1Mid);
-                            await this.pushUpdate(bot, battle, battle.p2.id, battle.p2Mid);
+                            await Promise.all([
+                                this.pushUpdate(bot, battle, battle.p1.id, battle.p1Mid),
+                                this.pushUpdate(bot, battle, battle.p2.id, battle.p2Mid)
+                            ]);
                             await new Promise(r => setTimeout(r, 500));
                         }
                     }
@@ -214,7 +226,6 @@ module.exports = {
                 if (battle.status === 'finished') break;
             }
 
-            // 3. Post-turn cleanup (dots, CE regen)
             if (battle.status !== 'finished') {
                 const cleanupLogs = engine.postTurnCleanup(battle);
                 if (cleanupLogs.length > 0) {
@@ -229,7 +240,6 @@ module.exports = {
             }
         } finally {
             battle.processing = false;
-            // Use selective update to avoid illegal $ keys from internal NeDB state
             await db.battles.update({ _id: battle._id }, { 
                 $set: { 
                     p1: battle.p1,
@@ -245,29 +255,41 @@ module.exports = {
             });
             
             // Final push (always happens once at the end)
-            await this.pushUpdate(bot, battle, battle.p1.id, battle.p1Mid);
-            await this.pushUpdate(bot, battle, battle.p2.id, battle.p2Mid);
+            const updates = [
+                this.pushUpdate(bot, battle, battle.p1.id, battle.p1Mid),
+                this.pushUpdate(bot, battle, battle.p2.id, battle.p2Mid)
+            ];
+            if (battle.chatId && battle.groupMessageId) {
+                updates.push(this.pushUpdate(bot, battle, battle.chatId, battle.groupMessageId, true));
+            }
+            await Promise.all(updates);
         }
     },
 
-    async pushUpdate(bot, battle, userId, messageId) {
+    async pushUpdate(bot, battle, targetId, messageId, isSpectator = false) {
         if (!messageId) return;
-        const isP1 = userId === battle.p1.id;
+        const isP1 = targetId === battle.p1.id;
         const mySide = isP1 ? battle.p1 : battle.p2;
         const myActive = mySide.team[mySide.activeIdx];
-        const ctxMock = { telegram: bot, chat: { id: userId } };
+        const ctxMock = { telegram: bot, chat: { id: targetId } };
 
-        const msg = ui.renderPokemonUI(battle, userId);
+        const msg = ui.renderPokemonUI(battle, isSpectator ? null : targetId);
 
         if (battle.status === 'finished') {
-            const resultMsg = battle.winnerId === userId ? "\n\n🎉 <b>VICTORY!</b> Match concluded." : "\n\n💀 <b>DEFEAT!</b> Soul dissipated.";
-            const kb = Markup.inlineKeyboard([[Markup.button.callback('🔙 Return to Hub', 'back_to_hub')]]);
-            return bot.editMessageCaption(userId, messageId, null, msg + resultMsg, { parse_mode: 'HTML', ...kb }).catch(() => null);
+            const resultMsg = isSpectator ? `\n\n🏆 VICTORY FOR @${battle.winner}!` : (battle.winnerId === targetId ? "\n\n🎉 VICTORY! Match concluded." : "\n\n💀 DEFEAT! Soul dissipated.");
+            const kb = isSpectator ? null : Markup.inlineKeyboard([[Markup.button.callback('🔙 Return to Hub', 'back_to_hub')]]);
+            return bot.editMessageCaption(targetId, messageId, null, msg + resultMsg, { parse_mode: 'HTML', ...kb }).catch(() => null);
         }
 
-        const hasActed = isP1 ? !!battle.p1Choice : !!battle.p2Choice;
-        if (hasActed) {
-            return bot.editMessageCaption(userId, messageId, null, msg + "\n⏳ <b>Waiting for opponent...</b>", { parse_mode: 'HTML' }).catch(() => null);
+        if (!isSpectator) {
+            const hasActed = isP1 ? !!battle.p1Choice : !!battle.p2Choice;
+            if (hasActed) {
+                return bot.editMessageCaption(targetId, messageId, null, msg + "\n⏳ Waiting for opponent...", { parse_mode: 'HTML' }).catch(() => null);
+            }
+        } else {
+            // Spectator log
+            const statusLine = `\n\n🌓 STATUS: Waiting for sorcerers to move...`;
+            return bot.editMessageCaption(targetId, messageId, null, msg + statusLine, { parse_mode: 'HTML' }).catch(() => null);
         }
 
         const moveButtons = myActive.moves.map((m, i) => Markup.button.callback(m.name, `pvp_atk_${battle._id}_${i}`));
@@ -335,7 +357,7 @@ module.exports = {
                 await db.users.update({ telegramId: loser.telegramId }, { $inc: { coins: -stealAmt } });
                 await db.users.update({ telegramId: winner.telegramId }, { $inc: { coins: stealAmt } });
                 
-                const lootMsg = `\n\n💰 <b>LOOT!</b>\nWinner @${winner.username} stole 🪙 <b>${stealAmt} coins</b> from @${loser.username}!`;
+                const lootMsg = `\n\n💰 LOOT!\nWinner @${winner.username} stole 🪙 ${stealAmt} coins from @${loser.username}!`;
                 await ctx.telegram.sendMessage(winner.telegramId, lootMsg, { parse_mode: 'HTML' }).catch(() => null);
                 await ctx.telegram.sendMessage(loser.telegramId, lootMsg, { parse_mode: 'HTML' }).catch(() => null);
             }
@@ -348,17 +370,25 @@ module.exports = {
                 
                 if (stealableItems.length > 0) {
                     const itemToSteal = stealableItems[Math.floor(Math.random() * stealableItems.length)];
-                    await db.users.update({ telegramId: loser.telegramId, "inventory.id": itemToSteal.id }, { $inc: { "inventory.$.qty": -1 } });
                     
+                    // Remove from loser
+                    const lIdx = loserInv.findIndex(i => i.id === itemToSteal.id);
+                    loserInv[lIdx].qty -= 1;
+                    await db.users.update({ telegramId: loser.telegramId }, { $set: { inventory: loserInv } });
+                    
+                    // Add to winner
                     const winInv = winner.inventory || [];
                     const winIdx = winInv.findIndex(i => i.id === itemToSteal.id);
                     if (winIdx > -1) {
-                        await db.users.update({ telegramId: winner.telegramId, "inventory.id": itemToSteal.id }, { $inc: { "inventory.$.qty": 1 } });
+                        winInv[winIdx].qty += 1;
+                        await db.users.update({ telegramId: winner.telegramId }, { $set: { inventory: winInv } });
                     } else {
-                        await db.users.update({ telegramId: winner.telegramId }, { $push: { inventory: { id: itemToSteal.id, qty: 1 } } });
+                        winInv.push({ id: itemToSteal.id, qty: 1 });
+                        await db.users.update({ telegramId: winner.telegramId }, { $set: { inventory: winInv } });
                     }
                     
-                    const itemMsg = `\n\n🏴‍☠️ <b>ITEM STOLEN!</b>\n@${winner.username} stole a <b>${itemToSteal.id.replace(/_/g, ' ')}</b> from @${loser.username}'s bag!`;
+                    const itemMsg = `\n\n🏴‍☠️ ITEM STOLEN!\n@${winner.username} stole a ${itemToSteal.id.replace(/_/g, ' ')} from @${loser.username}'s bag!`;
+
                     await ctx.telegram.sendMessage(winner.telegramId, itemMsg, { parse_mode: 'HTML' }).catch(() => null);
                     await ctx.telegram.sendMessage(loser.telegramId, itemMsg, { parse_mode: 'HTML' }).catch(() => null);
                 }
@@ -366,53 +396,64 @@ module.exports = {
         }
     },
 
-    /**
-     * Periodically called to clean up inactive battles
-     */
     async checkBattleTimeouts(bot) {
-        const timeoutMs = 120000; // 2 minutes
+        const TIMEOUT_MS = 120000; // 2 minutes
         const activeBattles = await db.battles.find({ status: 'active' });
         
         for (const b of activeBattles) {
-            const idleTime = Date.now() - (b.lastActionAt || Date.now());
-            if (idleTime > timeoutMs) {
-                console.log(`[TIMEOUT] Ending battle ${b._id} due to inactivity.`);
-                
-                b.status = 'finished';
-                b.log.push("⚠️ Battle timed out due to inactivity.");
-                
-                // Forfeit logic: if one person moved and the other didn't, the one who didn't lose.
-                // If both didn't move, it's a draw/no winner? Or just end it.
-                if (b.p1Choice && !b.p2Choice) {
-                    b.winner = b.p1.username;
-                    b.winnerId = b.p1.id;
-                } else if (b.p2Choice && !b.p1Choice) {
-                    b.winner = b.p2.username;
-                    b.winnerId = b.p2.id;
-                } else {
-                    b.winner = 'None (Draw)';
-                    b.winnerId = null;
-                }
+            const lastAction = b.lastActionAt || b.createdAt || 0;
+            const idleMs = Date.now() - lastAction;
 
-                await db.battles.update({ _id: b._id }, {
-                    $set: {
-                        status: b.status,
-                        winner: b.winner,
-                        winnerId: b.winnerId,
-                        log: b.log
-                    }
-                });
-                
-                const msg = ui.renderPokemonUI(b, b.p1.id) + `\n\n🕒 <b>TIMEOUT!</b> The battle was terminated due to inactivity.`;
-                const kb = Markup.inlineKeyboard([[Markup.button.callback('🔙 Return to Hub', 'back_to_hub')]]);
+            if (idleMs < TIMEOUT_MS) continue;
 
-                try {
-                    if (b.p1Mid) await bot.telegram.editMessageCaption(b.p1.id, b.p1Mid, null, msg, { parse_mode: 'HTML', ...kb }).catch(() => null);
-                    if (b.p2Mid) await bot.telegram.editMessageCaption(b.p2.id, b.p2Mid, null, msg, { parse_mode: 'HTML', ...kb }).catch(() => null);
-                } catch (e) {
-                    console.error("Error notifying timeout:", e);
-                }
+            console.log(`[TIMEOUT] Ending battle ${b._id} — idle for ${Math.floor(idleMs/1000)}s.`);
+
+            if (b.p1Choice && !b.p2Choice) {
+                b.winner = b.p1.username;
+                b.winnerId = b.p1.id;
+            } else if (b.p2Choice && !b.p1Choice) {
+                b.winner = b.p2.username;
+                b.winnerId = b.p2.id;
+            } else {
+                b.winner = 'None (Draw)';
+                b.winnerId = null;
             }
+
+            b.status = 'finished';
+            b.log.push('⏱️ Match ended — 2 minutes of inactivity.');
+
+            await db.battles.update({ _id: b._id }, {
+                $set: {
+                    status: b.status,
+                    winner: b.winner,
+                    winnerId: b.winnerId,
+                    log: b.log
+                }
+            });
+
+            const timeoutLine = b.winnerId
+                ? `\n\n⏱️ TIMEOUT! @${b.winner} wins — opponent was too slow.`
+                : `\n\n⏱️ TIMEOUT! Match dissolved — neither sorcerer acted in time.`;
+
+            const kb = Markup.inlineKeyboard([[Markup.button.callback('🔙 Return to Hub', 'back_to_hub')]]);
+
+            const notifyPlayer = async (userId, msgId) => {
+                const caption = ui.renderPokemonUI(b, userId) + timeoutLine;
+                try {
+                    if (msgId) {
+                        // Player had the battle open — edit their existing message
+                        await bot.telegram.editMessageCaption(userId, msgId, null, caption, { parse_mode: 'HTML', ...kb }).catch(() => null);
+                    } else {
+                        // Player never opened the battle — send a fresh message
+                        await bot.telegram.sendMessage(userId, `⏱️ BATTLE TIMEOUT\n\nYour match ended because no action was taken within 2 minutes.${timeoutLine}`, { parse_mode: 'HTML', ...kb }).catch(() => null);
+                    }
+                } catch (e) {
+                    console.error('[TIMEOUT NOTIFY]', e.message);
+                }
+            };
+
+            await notifyPlayer(b.p1.id, b.p1Mid);
+            await notifyPlayer(b.p2.id, b.p2Mid);
         }
     }
 };

@@ -96,7 +96,7 @@ module.exports = {
             user.gachaTickets = (user.gachaTickets || 0) + 10;
         }
 
-        await db.users.update({ telegramId: userId }, user);
+        await db.users.update({ telegramId: userId }, { $set: user });
 
         return { 
             success: true, 

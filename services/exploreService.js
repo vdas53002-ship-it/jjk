@@ -18,11 +18,11 @@ class ExploreService {
             
             // Base Rates
             BASE_CHANCES: {
-                "Common": 0.60,
-                "Rare": 0.40,
-                "Epic": 0.25,
-                "Legendary": 0.10,
-                "Mythic": 0.01
+                "Common": 0.35,
+                "Rare": 0.18,
+                "Epic": 0.08,
+                "Legendary": 0.03,
+                "Mythic": 0.005
             },
 // ... (REWARDS)
 
@@ -65,11 +65,11 @@ class ExploreService {
         };
 
         this.CONSTANTS.REWARDS = {
-            "Common": { coins: 60, xp: 30, dust: 10 },
-            "Rare": { coins: 150, xp: 60, dust: 25 },
-            "Epic": { coins: 400, xp: 150, dust: 60 },
-            "Legendary": { coins: 1500, xp: 750, dust: 250 },
-            "Mythic": { coins: 7000, xp: 3000, dust: 1500 }
+            "Common": { coins: 100, xp: 50, dust: 20, shards: 5 },
+            "Rare": { coins: 300, xp: 120, dust: 50, shards: 15 },
+            "Epic": { coins: 1000, xp: 400, dust: 150, shards: 50 },
+            "Legendary": { coins: 5000, xp: 1500, dust: 500, shards: 200 },
+            "Mythic": { coins: 20000, xp: 10000, dust: 2000, shards: 1000 }
         };
     }
 
@@ -168,12 +168,12 @@ class ExploreService {
         }
         
         if (battleData.usedItem === 'grade_1_shackle') {
-            finalChance += 0.50;
-            modifiers.push("⛓ Grade-1 Shackle (+50%)");
+            finalChance += 0.30;
+            modifiers.push("⛓ Grade-1 Shackle (+30%)");
         } else if (battleData.usedItem === 'cursed_seal_tag') {
             finalChance += 0.15;
-            modifiers.push("🏷️ Cursed Seal Tag (+15%)");
-        } else if (battleData.usedItem === 'cursed_charm' || battleData.usedCharm) {
+            modifiers.push("🏷️ Cursed Seal (+15%)");
+        } else if (battleData.usedItem === 'cursed_charm' || battleData.usedCharm || user.activeCursedCharm) {
             finalChance += 0.25;
             modifiers.push("🧿 Cursed Charm (+25%)");
         }
@@ -203,8 +203,8 @@ class ExploreService {
         // 5. Duplicate Penalty (-30%)
         const alreadyOwns = await db.roster.findOne({ userId: user.telegramId, charId: targetChar.name });
         if (alreadyOwns) {
-            finalChance -= 0.30;
-            modifiers.push("🔄 Duplicate Bond (-30%)");
+            finalChance -= 0.10;
+            modifiers.push("🔄 Duplicate Bond (-10%)");
         } else {
             finalChance += 0.10;
             modifiers.push("✨ First Discovery (+10%)");
@@ -223,21 +223,63 @@ class ExploreService {
     }
 
     syncStamina(user) {
-        if (!user) return null;
-        const now = Date.now();
-        const lastUpdate = user.lastStaminaUpdate || now;
-        const diffMs = now - lastUpdate;
-        const refillMs = this.CONSTANTS.REFILL_MINUTES * 60 * 1000;
-
-        if (diffMs >= refillMs) {
-            const refillAmount = Math.floor(diffMs / refillMs);
-            const newStamina = Math.min(this.CONSTANTS.MAX_STAMINA, (user.stamina || 0) + refillAmount);
-            return {
-                stamina: newStamina,
-                lastStaminaUpdate: now - (diffMs % refillMs)
-            };
-        }
         return null;
+    }
+
+    /**
+     * Auto-Grind: Performs 10 automated hunts at once.
+     * Rewards are standard, but character encounters are much rarer (30% of normal).
+     * Automatically attempts a low-chance (5%) capture if a character is found.
+     */
+    async runAutoGrind(user, biomeKey = "TIER_1") {
+        const batchSize = 10;
+        const staminaCost = 50; // 5 per hunt
+        const results = {
+            coins: 0,
+            dust: 0,
+            xp: 0,
+            charactersFound: [],
+            shards: 0,
+            staminaUsed: staminaCost
+        };
+
+        if ((user.stamina || 0) < staminaCost) {
+            return { success: false, msg: `❌ Insufficient Stamina! You need 🔋 50 Stamina for this blitz.` };
+        }
+
+        const biome = this.BIOMES[biomeKey] || this.BIOMES["TIER_1"];
+        
+        for (let i = 0; i < batchSize; i++) {
+            // 1. Base Rewards (Simulate 1 step of exploration)
+            const event = this.getRandomEvent(1); // Usually a battle or scavenge
+            
+            if (event.type === 'battle') {
+                // Reduced character chance (30% of normal)
+                if (Math.random() < 0.30) {
+                    const encounter = await this.rollEncounter(biomeKey);
+                    
+                    // Auto-Capture check (Flat 5% chance)
+                    if (Math.random() < 0.05) {
+                        results.charactersFound.push(encounter.character.name);
+                    } else {
+                        // Consolation prize for finding but not catching
+                        results.coins += 50;
+                    }
+                } else {
+                    // Standard trash mob reward
+                    results.coins += 30;
+                    results.xp += 15;
+                }
+            } else {
+                const reward = this.generateStepReward(event.type);
+                results.coins += (reward.coins || 0);
+                results.dust += (reward.dust || 0);
+                results.xp += (reward.xp || 0);
+                results.shards += (reward.shardsCurrency || 0);
+            }
+        }
+
+        return { success: true, ...results };
     }
 
     checkDailyReset(user) {

@@ -78,10 +78,10 @@ module.exports = {
 
         if (itemId === 'energy_drink') {
             incOps.dailyExploreCount = -100; // Large reduction for drink
-            updateResult = "✅ Stamina Refilled! (Expedition limit reduced by 100)";
+            updateResult = "✅ Hunt Limit Restored! (Daily hunt count reduced by 100)";
         } else if (itemId === 'max_stamina_potion') {
             setOps.dailyExploreCount = 0;
-            updateResult = "🔥 EXPEDITION BURST! Daily limit reset to 0/1000.";
+            updateResult = "🔥 EXPEDITION BURST! Daily limit reset to 0/500.";
         } else if (itemId === 'soul_shard') {
             incOps.dust = 100;
             updateResult = "✨ Soul Shard Shattered! +100 Dust acquired.";
@@ -102,6 +102,12 @@ module.exports = {
             setOps.hasExplorationTicket = true;
             setOps.expTicketExpiry = expiry;
             updateResult = "✅ Activation Successful! You have unlimited explorations for the next 24h.";
+        } else if (itemId === 'cursed_charm') {
+            setOps.activeCursedCharm = true;
+            updateResult = "🧿 Cursed Charm Active! Your next hunt will have a massive capture bonus.";
+        } else if (itemId === 'exp_charm') {
+            setOps.activeExpCharm = true;
+            updateResult = "✨ EXP Charm Active! Your team will gain double XP in their next battle.";
         } else if (['special_grade_potion', 'minor_hp_potion', 'major_hp_potion', 'ce_core', 'ce_charge'].includes(itemId)) {
             return ctx.answerCbQuery("⚔️ This is a combat item! Use it during a duel.", { show_alert: true });
         }

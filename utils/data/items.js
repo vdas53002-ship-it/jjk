@@ -53,7 +53,7 @@ module.exports = {
     "gacha_ticket": {
         id: "gacha_ticket",
         name: "Gacha Ticket",
-        icon: "🎟",
+        icon: "🎫",
         description: "One random character pull.",
         price: 200,
         currency: "coins",
@@ -117,9 +117,9 @@ module.exports = {
     },
     "soul_shard": {
         id: "soul_shard",
-        name: "Soul Shard",
+        name: "Shards",
         icon: "💎",
-        description: "Highly concentrated dust for leveling.",
+        description: "Highly concentrated essence for leveling.",
         price: 250,
         currency: "coins",
         shop: { category: "special", stock: 999 }
@@ -137,23 +137,23 @@ module.exports = {
         id: "energy_drink",
         name: "Energy Drink",
         icon: "🥤",
-        description: "Restore 30 stamina for explore.",
+        description: "Recover 100 daily hunts.",
         price: 50,
         currency: "coins",
         shop: { category: "special", stock: 999 }
     },
     "exp_ticket": {
         id: "exp_ticket",
-        name: "Exploration Ticket",
+        name: "Hunt Ticket",
         icon: "🎫",
-        description: "+1 explore (bypass daily limit).",
+        description: "+1 hunt (bypass daily limit).",
         price: 100,
         currency: "coins",
         shop: { category: "special", stock: 999 }
     },
     "cursed_seal_tag": {
         id: "cursed_seal_tag",
-        name: "Cursed Seal Tag",
+        name: "Cursed Seal",
         icon: "🏷️",
         description: "Standard tool for capturing spirits. +15% chance.",
         price: 150,
@@ -164,7 +164,7 @@ module.exports = {
         id: "cursed_charm",
         name: "Cursed Charm",
         icon: "🧿",
-        description: "+25% capture chance in explore.",
+        description: "+10% capture chance while hunting.",
         price: 200,
         currency: "coins",
         shop: { category: "special", stock: 999 }
@@ -173,7 +173,7 @@ module.exports = {
         id: "grade_1_shackle",
         name: "Grade-1 Shackle",
         icon: "⛓",
-        description: "+50% capture chance in explore.",
+        description: "+30% capture chance while hunting.",
         price: 800,
         currency: "coins",
         shop: { category: "special", stock: 999 }
@@ -191,7 +191,7 @@ module.exports = {
         id: "max_stamina_potion",
         name: "Max Stamina Potion",
         icon: "🔥",
-        description: "Fully restore stamina.",
+        description: "Fully reset daily hunt limit.",
         price: 150,
         currency: "coins",
         shop: { category: "special", stock: 999 }
@@ -202,6 +202,24 @@ module.exports = {
         icon: "🗃",
         description: "Bundle of 10 Gacha Tickets.",
         price: 1800,
+        currency: "coins",
+        shop: { category: "special", stock: 999 }
+    },
+    "exp_charm": {
+        id: "exp_charm",
+        name: "EXP Charm",
+        icon: "✨",
+        description: "2x Character XP for the next battle.",
+        price: 300,
+        currency: "coins",
+        shop: { category: "special", stock: 999 }
+    },
+    "gold_ingot": {
+        id: "gold_ingot",
+        name: "Gold Ingot",
+        icon: "🪙",
+        description: "Valuable gold that can be sold for 1000 Coins.",
+        price: 1200,
         currency: "coins",
         shop: { category: "special", stock: 999 }
     }

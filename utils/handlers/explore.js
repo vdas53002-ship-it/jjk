@@ -29,7 +29,7 @@ module.exports = {
             }
 
             // Show 3 Tiers for spawning
-            const msg = ui.formatHeader("CURSED EXPEDITION", "EXPLORE") + "\n\n" +
+            const msg = ui.formatHeader("CURSED HUNT", "EXPLORE") + "\n\n" +
                 "Select the manifestation level for your hunt:\n\n" +
                 "🏮 <b>Outskirts:</b> Grades 4-2 (Lv.1+)\n" +
                 "🏚️ <b>District:</b> Grades 2-1 (Lv.20+)\n" +
@@ -39,6 +39,7 @@ module.exports = {
                 [Markup.button.callback('🏮 HAUNTED OUTSKIRTS', 'exp_init_TIER_1')],
                 [Markup.button.callback('🏚️ CURSED DISTRICT', 'exp_init_TIER_2')],
                 [Markup.button.callback('🏯 SPECIAL GRADE TERRITORY', 'exp_init_TIER_3')],
+                [Markup.button.callback('⚙️ AUTOMATED GRINDING', 'menu_auto_grind')],
                 [Markup.button.callback('🏠 BACK', 'back_to_hub')]
             ]);
 
@@ -48,6 +49,82 @@ module.exports = {
             console.error("[Explore Error]", error);
             return ctx.reply("❌ Cursed instability. Return to Jujutsu High.");
         }
+    },
+
+    async showAutoMenu(ctx) {
+        const user = await db.users.findOne({ telegramId: ctx.from.id });
+        if (!user) return ctx.reply("Please /start first.");
+
+        const msg = ui.formatHeader("AUTOMATED GRINDING", "EXPLORE") + "\n\n" +
+            "👤 <b>AUTO-SYSTEM: ACTIVE</b>\n\n" +
+            "The Higher-Ups have approved automated scouting missions. Instantly clear 10 rooms to gather resources.\n\n" +
+            "⚠️ <b>WARNING:</b>\n" +
+            "• Cost: 🔋 50 Stamina\n" +
+            "• Character Find Rate: -70%\n" +
+            "• Auto-Capture Chance: 5%\n\n" +
+            "Select your deployment area:";
+
+        const kb = Markup.inlineKeyboard([
+            [Markup.button.callback('🏮 OUTSKIRTS (Lv.1)', 'exp_auto_TIER_1')],
+            [Markup.button.callback('🏚️ DISTRICT (Lv.20)', 'exp_auto_TIER_2')],
+            [Markup.button.callback('🏯 TERRITORY (Lv.50)', 'exp_auto_TIER_3')],
+            [Markup.button.callback('🏠 BACK', 'cmd_explore'), Markup.button.callback('❌ CLOSE', 'cmd_close')]
+        ]);
+
+        if (ctx.callbackQuery) return media.smartEdit(ctx, msg, kb);
+        return ctx.replyWithHTML(msg, kb);
+    },
+
+    async executeAutoGrind(ctx, tier) {
+        const userId = ctx.from.id;
+        let user = await db.users.findOne({ telegramId: userId });
+        
+        const res = await exploreService.runAutoGrind(user, tier);
+        if (!res.success) {
+            return ctx.answerCbQuery(res.msg, { show_alert: true });
+        }
+
+        // Update User
+        const update = {
+            $inc: {
+                coins: res.coins,
+                dust: res.dust,
+                playerXp: res.xp,
+                shardsCurrency: res.shards,
+                stamina: -res.staminaUsed,
+                dailyExploreCount: 10
+            }
+        };
+        await db.users.update({ telegramId: userId }, update);
+
+        // Handle Characters
+        if (res.charactersFound.length > 0) {
+            for (const charId of res.charactersFound) {
+                await db.roster.insert({ userId, charId, level: 1, xp: 0 });
+            }
+        }
+
+        let resultMsg = ui.formatHeader("AUTO-GRIND COMPLETE", "EXPLORE") + "\n\n" +
+            `🏁 <b>Rooms Cleared:</b> 10\n` +
+            `🔋 <b>Stamina Used:</b> -${res.staminaUsed}\n\n` +
+            `💰 <b>Coins:</b> +${res.coins}\n` +
+            `✨ <b>Dust:</b> +${res.dust}\n` +
+            `📈 <b>XP:</b> +${res.xp}\n` +
+            `🧩 <b>Shards:</b> +${res.shards}\n\n`;
+
+        if (res.charactersFound.length > 0) {
+            resultMsg += `✨ <b>NEW SOULS SEALED:</b>\n` + res.charactersFound.map(c => `👤 ${c}`).join('\n');
+        } else {
+            resultMsg += `<i>No characters were successfully captured during this blitz.</i>`;
+        }
+
+        const kb = Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 GRIND AGAIN', `exp_auto_${tier}`)],
+            [Markup.button.callback('🔙 BACK TO HUB', 'back_to_hub')]
+        ]);
+
+        if (ctx.callbackQuery) await ctx.answerCbQuery("System Processing...");
+        return media.sendBanner(ctx, tier, resultMsg, kb);
     },
 
     async handleNextStep(ctx) {
@@ -106,7 +183,7 @@ module.exports = {
             // 4. Update Explore Count & Initialize Step 1
             await db.users.update({ telegramId: user.telegramId }, { 
                 $inc: { dailyExploreCount: 1 },
-                $set: { lastExploreTime: now, activeExplore: { biome: biomeKey, step: 1, status: 'started' } }
+                $set: { lastExploreTime: now, lastExploreActionAt: now, activeExplore: { biome: biomeKey, step: 1, status: 'started' } }
             });
 
             await questService.updateProgress(user.telegramId, 'explore_count');
@@ -141,6 +218,7 @@ module.exports = {
 
             await db.users.update({ telegramId: userId }, {
                 $set: {
+                    lastExploreActionAt: Date.now(),
                     activeExplore: {
                         name: char.name,
                         rarity: encounter.rarity,
@@ -190,8 +268,9 @@ module.exports = {
                 const inv = userData.inventory || [];
                 const invIdx = inv.findIndex(i => i.id === reward.itemId);
                 if (invIdx > -1) {
-                    await db.users.update({ telegramId: userId, "inventory.id": reward.itemId }, { 
-                        $inc: { "inventory.$.qty": 1 } 
+                    inv[invIdx].qty += 1;
+                    await db.users.update({ telegramId: userId }, { 
+                        $set: { inventory: inv } 
                     });
                 } else {
                     await db.users.update({ telegramId: userId }, { 
@@ -200,7 +279,7 @@ module.exports = {
                 }
             }
 
-            await db.users.update({ telegramId: userId }, { $set: setOps, $inc: incOps });
+            await db.users.update({ telegramId: userId }, { $set: { ...setOps, lastExploreActionAt: Date.now() }, $inc: incOps });
 
             const msg = ui.formatHeader(event.name, "EXPLORE") + "\n" +
                 `<b>${progress}</b>\n\n` +
@@ -215,7 +294,7 @@ module.exports = {
             }
 
             const kb = Markup.inlineKeyboard([
-                [Markup.button.callback(step >= 3 ? '🗺 COMPLETE EXPEDITION' : '🚪 NEXT ROOM', step >= 3 ? 'cmd_explore' : `exp_next`)],
+                [Markup.button.callback(step >= 3 ? '🗺 COMPLETE HUNT' : '🚪 NEXT ROOM', step >= 3 ? 'cmd_explore' : `exp_next`)],
                 [Markup.button.callback('🏠 EXIT', 'back_to_hub')]
             ]);
 
@@ -287,7 +366,7 @@ module.exports = {
         }
 
         const catchItems = [
-            { id: 'cursed_seal_tag', name: 'Cursed Seal Tag', icon: '🏷️' },
+            { id: 'cursed_seal_tag', name: 'Cursed Seal', icon: '🏷️' },
             { id: 'grade_1_shackle', name: 'Grade-1 Shackle', icon: '⛓' },
             { id: 'domain_essence', name: 'Domain Essence', icon: '🌌' }
         ];
@@ -336,14 +415,16 @@ module.exports = {
 
         // 2. Consume Item (if toolId)
         if (toolId) {
-            const hasItem = (user.inventory || []).find(i => i.id === toolId && i.qty > 0);
-            if (!hasItem) {
+            const inv = user.inventory || [];
+            const hasItemIdx = inv.findIndex(i => i.id === toolId && i.qty > 0);
+            if (hasItemIdx === -1) {
                 if (ctx.callbackQuery) return ctx.answerCbQuery("❌ You don't have this item!", { show_alert: true });
                 return ctx.reply("❌ You don't have this item!");
             }
             
-            await db.users.update({ telegramId: userId, "inventory.id": toolId }, { 
-                $inc: { "inventory.$.qty": -1 } 
+            inv[hasItemIdx].qty -= 1;
+            await db.users.update({ telegramId: userId }, { 
+                $set: { inventory: inv } 
             });
         }
 
@@ -361,6 +442,11 @@ module.exports = {
             enemyMaxHp: 100,
             lastHitWasBlackFlash: true
         });
+
+        // Clear active charm flag if used
+        if (user.activeCursedCharm) {
+            await db.users.update({ telegramId: userId }, { $set: { activeCursedCharm: false } });
+        }
 
         const roll = Math.random();
         const success = roll <= captureRes.finalChance;
@@ -382,7 +468,14 @@ module.exports = {
                 `Fantastic work! <b>${charName}</b> has joined your roster (Level 1).\n\n` +
                 `🎯 <b>Chance:</b> ${Math.floor(captureRes.finalChance * 100)}%`;
             
-            await db.roster.insert({ userId, charId: charName, level: 1, xp: 0 });
+            await db.roster.insert({ 
+                userId, 
+                charId: charName, 
+                level: 1, 
+                xp: 0,
+                rarity: char.rarity || 'Common',
+                grade: char.grade || 'Grade 4'
+            });
             await questService.updateProgress(userId, 'capture_count');
             
             const update = { $inc: { dailyCatchCount: 1 } };
@@ -430,29 +523,67 @@ module.exports = {
         let user = ctx.state.user;
         if (!user) return ctx.reply("Please /start first.");
 
-        // Sync local data first
-        const staminaSync = exploreService.syncStamina(user);
-        if (staminaSync) {
-            await db.users.update({ telegramId: user.telegramId }, { $set: staminaSync });
-            user = { ...user, ...staminaSync };
-        }
-
         const now = Date.now();
         const nextExplore = Math.max(0, exploreService.CONSTANTS.COOLDOWN_SEC - Math.floor((now - (user.lastExploreTime || 0)) / 1000));
         
         const inv = user.inventory || [];
         const getQty = (id) => (inv.find(i => i.id === id) || { qty: 0 }).qty;
 
-        let msg = ui.formatHeader("EXPLORATION STATS", "EXPLORE") + "\n\n" +
-            `🗺 <b>Expeditions:</b> ${user.dailyExploreCount || 0}/1000\n` +
+        let msg = ui.formatHeader("HUNTING STATS", "EXPLORE") + "\n\n" +
+            `🗺 <b>Daily Hunts:</b> ${user.dailyExploreCount || 0}/1000\n` +
             `🕸 <b>Captures:</b> ${user.dailyCatchCount || 0}/${exploreService.CONSTANTS.DAILY_CATCH_LIMIT}\n` +
             `⌛ <b>Cooldown:</b> ${nextExplore > 0 ? `${nextExplore}s` : 'READY!'}\n\n` +
-            `ℹ️ <i>Stamina is no longer required for basic exploration.</i>\n\n` +
+            `ℹ️ <i>Manual hunting is limited to 1000 per day. Automated Grinding (/open) requires Stamina.</i>\n\n` +
             `🎒 <b>BAG:</b>\n` +
-            `▪️ Cursed Charms: ${getQty('cursed_charm')}\n` +
+            `▪️ Cursed Seals: ${getQty('cursed_seal_tag')}\n` +
             `▪️ Energy Drinks: ${getQty('energy_drink')}`;
 
         return media.sendBanner(ctx, "Explore", msg);
+    },
+
+    /**
+     * Periodically called to clear hunt sessions idle for 2+ minutes.
+     * Called from the same 30s watcher in bot.js as checkBattleTimeouts.
+     */
+    async checkExploreTimeouts(bot) {
+        const TIMEOUT_MS = 120000; // 2 minutes
+        const now = Date.now();
+
+        // Only find users who have an active explore session
+        const staleUsers = await db.users.find({
+            activeExplore: { $exists: true, $ne: null }
+        });
+
+        for (const user of staleUsers) {
+            const exp = user.activeExplore;
+            if (!exp) continue;
+
+            // Don't cancel while they're actively in a battle scene
+            if (exp.status === 'battling') continue;
+
+            const lastAction = user.lastExploreActionAt || user.lastExploreTime || 0;
+            const idleMs = now - lastAction;
+
+            if (idleMs < TIMEOUT_MS) continue;
+
+            console.log(`[EXPLORE TIMEOUT] Clearing session for user ${user.telegramId} — idle ${Math.floor(idleMs / 1000)}s.`);
+
+            await db.users.update(
+                { telegramId: user.telegramId },
+                { $set: { activeExplore: null, lastExploreActionAt: null } }
+            );
+
+            // Notify the user
+            try {
+                await bot.telegram.sendMessage(
+                    user.telegramId,
+                    `⏱️ <b>HUNT EXPIRED</b>\n\nYour expedition was abandoned — no action was taken for 2 minutes.\nThe spirit faded back into the shadows.`,
+                    { parse_mode: 'HTML' }
+                ).catch(() => null);
+            } catch (e) {
+                // User may have blocked the bot, ignore
+            }
+        }
     }
 };
 

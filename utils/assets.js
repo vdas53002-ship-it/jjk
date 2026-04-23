@@ -2,6 +2,19 @@ const path = require('path');
 const fs = require('fs');
 
 const IMAGE_DIR = path.join(__dirname, '..', 'images');
+const PIXEL_DIR = path.join(IMAGE_DIR, 'pixel_art');
+
+// --- PRE-LOAD DIRECTORY LISTINGS AT STARTUP (avoids repeated blocking disk I/O) ---
+let _imageFiles = [];
+let _pixelFiles = [];
+try { if (fs.existsSync(IMAGE_DIR)) _imageFiles = fs.readdirSync(IMAGE_DIR); } catch(e) {}
+try { if (fs.existsSync(PIXEL_DIR)) _pixelFiles = fs.readdirSync(PIXEL_DIR); } catch(e) {}
+
+// Refresh the cached listings (call after adding new images without restarting)
+const refreshFileLists = () => {
+    try { if (fs.existsSync(IMAGE_DIR)) _imageFiles = fs.readdirSync(IMAGE_DIR); } catch(e) {}
+    try { if (fs.existsSync(PIXEL_DIR)) _pixelFiles = fs.readdirSync(PIXEL_DIR); } catch(e) {}
+};
 
 const REGISTRY = {
     // --- BANNERS ---
@@ -26,7 +39,7 @@ const REGISTRY = {
     "Aoi Todo": path.join(IMAGE_DIR, 'AoiTodo.jpg'),
     "Panda": path.join(IMAGE_DIR, 'Panda.jpg'),
     "Maki Zenin": path.join(IMAGE_DIR, 'MakiZenin.jpg'),
-    "Inumaki Toge": path.join(IMAGE_DIR, 'TogeInumaki.jpg'),
+    "Inumaki Toge": path.join(IMAGE_DIR, 'InumakiToge.jpg'),
     "Suguru Geto": path.join(IMAGE_DIR, 'SuguruGeto.jpg'),
     "Mei Mei": path.join(IMAGE_DIR, 'MeiMei.jpg'),
     "Choso": path.join(IMAGE_DIR, 'choso.jpg'),
@@ -49,6 +62,15 @@ const REGISTRY = {
     "Akari Nitta": path.join(IMAGE_DIR, 'AkariNitta.jpg'),
     "Kokichi Muta": path.join(IMAGE_DIR, 'KokichiMuta.jpg'),
     "Utahime Iori": path.join(IMAGE_DIR, 'UtahimeIori.jpg'),
+    "Momo Nishimiya": path.join(IMAGE_DIR, 'MomoNishimiya.jpg'),
+    "Noritoshi Kamo": path.join(IMAGE_DIR, 'NoritoshiKamo.jpg'),
+    
+    // --- MYTHIC ---
+    "Sukuna 20F": path.join(IMAGE_DIR, 'Sukuna20F.jpg'),
+    "Awakened Gojo": path.join(IMAGE_DIR, 'AwakenedGojo.jpg'),
+    "Mahoraga": path.join(IMAGE_DIR, 'Mahoraga.jpg'),
+    "Kenjaku All Curses": path.join(IMAGE_DIR, 'KenjakuAllCurses.jpg'),
+    "Rika Uncontrolled": path.join(IMAGE_DIR, 'RikaUncontrolled.jpg'),
     
     // --- ALIASES ---
     "Sukuna": path.join(IMAGE_DIR, 'RyomenSukuna.jpg'),
@@ -58,14 +80,19 @@ const REGISTRY = {
     "Okkotsu": path.join(IMAGE_DIR, 'YutaOkkotsu.jpg'),
     "Geto": path.join(IMAGE_DIR, 'SuguruGeto.jpg'),
     "Maki": path.join(IMAGE_DIR, 'MakiZenin.jpg'),
-    "Inumaki": path.join(IMAGE_DIR, 'TogeInumaki.jpg'),
+    "Inumaki": path.join(IMAGE_DIR, 'InumakiToge.jpg'),
     "Nanami": path.join(IMAGE_DIR, 'NanamiKento.jpg'),
     "Hakari": path.join(IMAGE_DIR, 'HakariKinji.jpg'),
     "Yuki": path.join(IMAGE_DIR, 'YukiTsukomo.jpg'),
     "Shoko": path.join(IMAGE_DIR, 'ShokoIeiri.jpg'),
     "Yaga": path.join(IMAGE_DIR, 'MasamichiYaga.jpg'),
     "Mai": path.join(IMAGE_DIR, 'MaiZenin.jpg'),
-    "Kirara": path.join(IMAGE_DIR, 'KiraraHoshi.jpg')
+    "Kirara": path.join(IMAGE_DIR, 'KiraraHoshi.jpg'),
+    "Momo": path.join(IMAGE_DIR, 'MomoNishimiya.jpg'),
+    "Noritoshi": path.join(IMAGE_DIR, 'NoritoshiKamo.jpg'),
+    "Mahoraga": path.join(IMAGE_DIR, 'Mahoraga.jpg'),
+    "AwakenedGojo": path.join(IMAGE_DIR, 'AwakenedGojo.jpg'),
+    "Sukuna20F": path.join(IMAGE_DIR, 'Sukuna20F.jpg')
 };
 
 module.exports = {
@@ -82,17 +109,16 @@ module.exports = {
         const match = Object.keys(REGISTRY).find(key => charName.includes(key) || key.includes(charName));
         if (match) return REGISTRY[match];
 
-        // 3. Dynamic FS Lookup
+        // 3. Dynamic FS Lookup (uses pre-cached file list)
         const noSpaces = charName.replace(/\s+/g, '');
         const sanitized = charName.toLowerCase().split(' ').join('_');
         
-        if (fs.existsSync(IMAGE_DIR)) {
-            const files = fs.readdirSync(IMAGE_DIR);
+        if (_imageFiles.length > 0) {
             const extensions = ['.jpg', '.png', '.jpeg', '.gif'];
             
             // Try Patterns
             for (const ext of extensions) {
-                const f = files.find(f => {
+                const f = _imageFiles.find(f => {
                     const low = f.toLowerCase();
                     return low === (noSpaces + ext).toLowerCase() || low === (sanitized + ext).toLowerCase();
                 });
@@ -100,7 +126,7 @@ module.exports = {
             }
             
             // Try StartsWith
-            const startMatch = files.find(f => f.toLowerCase().startsWith(noSpaces.toLowerCase()) || f.toLowerCase().startsWith(sanitized.toLowerCase()));
+            const startMatch = _imageFiles.find(f => f.toLowerCase().startsWith(noSpaces.toLowerCase()) || f.toLowerCase().startsWith(sanitized.toLowerCase()));
             if (startMatch) return path.join(IMAGE_DIR, startMatch);
         }
 
@@ -120,11 +146,8 @@ module.exports = {
 
     getPixelAssetPath(nameOrItem) {
         const charName = typeof nameOrItem === 'string' ? nameOrItem : (nameOrItem.name || 'Academy');
-        const PIXEL_DIR = path.join(IMAGE_DIR, 'pixel_art');
         
-        if (fs.existsSync(PIXEL_DIR)) {
-            const files = fs.readdirSync(PIXEL_DIR);
-            
+        if (_pixelFiles.length > 0) {
             let searchName = charName.toLowerCase();
             
             const aliases = {
@@ -151,11 +174,13 @@ module.exports = {
             if (aliases[searchName]) searchName = aliases[searchName];
             else searchName = searchName.split(" ")[0];
             
-            const match = files.find(f => f.toLowerCase().includes(searchName));
+            const match = _pixelFiles.find(f => f.toLowerCase().includes(searchName));
             if (match) return path.join(PIXEL_DIR, match);
         }
         
         // Fallback to regular portrait if no pixel art found
         return this.getAssetPath(nameOrItem);
-    }
+    },
+
+    refreshFileLists
 };

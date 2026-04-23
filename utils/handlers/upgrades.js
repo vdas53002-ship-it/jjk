@@ -50,12 +50,14 @@ module.exports = {
         const upgCount = Object.values(char.upgrades || {}).reduce((a, b) => a + b, 0);
 
         let msg = ui.formatHeader(`UPGRADE: ${char.charId}`) + "\n\n" +
-            `🎭 <b>Level:</b> ${char.level || 1}\n` +
+            `🎭 <b>Grade:</b> ${char.grade || 'Grade 4'}\n` +
+            `📈 <b>Level:</b> ${char.level || 1}\n` +
             `📊 <b>Slots:</b> ${upgCount}/6\n\n` +
             `Choose an enhancement path:\n`;
 
         const kb = [
-            [Markup.button.callback('✨ LEVEL UP (Dust/Coins)', `upg_lvl_exec_${rosterId}`)]
+            [Markup.button.callback('✨ LEVEL UP (Dust/Coins)', `upg_lvl_exec_${rosterId}`)],
+            [Markup.button.callback('🎖 PROMOTE GRADE', `upg_grade_exec_${rosterId}`)]
         ];
         
         const upgradeItems = Object.values(items).filter(i => i.shop);
@@ -112,6 +114,37 @@ module.exports = {
         ]);
 
         await ctx.answerCbQuery("Success! Power Manifested.");
+        return media.smartEdit(ctx, msg, kb);
+    },
+
+    async executeLevelUp(ctx, rosterId) {
+        const result = await upgradeService.levelUpCharacter(ctx.from.id, rosterId);
+        
+        if (!result.success) {
+            return ctx.answerCbQuery(result.msg, { show_alert: true });
+        }
+
+        await ctx.answerCbQuery("✨ LEVEL UP SUCCESSFUL!");
+        return this.renderUpgradeOptions(ctx, rosterId);
+    },
+
+    async executeGradePromotion(ctx, rosterId) {
+        const result = await upgradeService.promoteGrade(ctx.from.id, rosterId);
+        
+        if (!result.success) {
+            return ctx.answerCbQuery(result.msg, { show_alert: true });
+        }
+
+        let msg = ui.formatHeader("🎖 PROMOTION GRANTED 🎖") + "\n\n" +
+            `${result.msg}\n\n` +
+            `Your sorcerer has ascended to a new height of power.`;
+
+        const kb = Markup.inlineKeyboard([
+            [Markup.button.callback('🔧 Upgrade Again', `upg_sel_char_${rosterId}`)],
+            [Markup.button.callback('🔙 Return', 'cmd_upgrades')]
+        ]);
+
+        await ctx.answerCbQuery("🎖 PROMOTION SUCCESS!");
         return media.smartEdit(ctx, msg, kb);
     }
 };

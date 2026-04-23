@@ -15,7 +15,7 @@ module.exports = {
 
     async claimDaily(userId) {
         const user = await db.users.findOne({ telegramId: userId });
-        
+
         if (!user) {
             return { success: false, msg: "❌ <b>ACCESS DENIED</b>\n\nYou must first register as a sorcerer using /start before claiming daily rewards." };
         }
@@ -66,20 +66,21 @@ module.exports = {
             if (streak % 5 === 0) items.push({ id: 'rare_upgrade', qty: 1 });
         }
 
-        let rewardList = `💰 +${coins} Coins`;
+        let rewardList = `💰 +${coins} Gold`;
         if (shards > 0) rewardList += `\n💎 +${shards} Shards`;
         items.forEach(itm => {
             const itemName = itm.id.replace(/_/g, ' ').toUpperCase();
             rewardList += `\n📦 +${itm.qty}x ${itemName}`;
         });
+        rewardList += `\n✨ +50 Dust`;
 
         // Grant
-        const updates = { 
-            $inc: { coins, shardsCurrency: shards }, 
-            $set: { lastDailyClaim: today, loginStreak: streak } 
+        const updates = {
+            $inc: { coins, shardsCurrency: shards, stamina: 50 },
+            $set: { lastDailyClaim: today, loginStreak: streak }
         };
         if (title) updates.$set.title = title;
-        
+
         let inv = user.inventory || [];
         items.forEach(itm => {
             const idx = inv.findIndex(i => i.id === itm.id);
@@ -87,7 +88,7 @@ module.exports = {
             else inv.push(itm);
         });
         updates.$set.inventory = inv;
-        
+
         // Gacha tickets often stored separately
         const ticketItem = items.find(i => i.id === 'gacha_ticket');
         if (ticketItem) updates.$inc.gachaTickets = ticketItem.qty;
@@ -104,14 +105,14 @@ module.exports = {
         const newAchs = await achievementService.updateProgress(userId, 'LOYALTY', 0); // Trigger check for current streak
         // Special case: updateProgress usually increments. For loyalty we sync with streak.
         await db.users.update({ telegramId: userId }, { $set: { "achievements.progress.LOYALTY": streak } });
-        const finalAchs = await achievementService.updateProgress(userId, 'LOYALTY', 0); 
-        
+        const finalAchs = await achievementService.updateProgress(userId, 'LOYALTY', 0);
+
         if (finalAchs && finalAchs.length > 0) {
             rewardList += `\n\n🏆 <b>ACHIEVEMENT UNLOCKED!</b>\n` + finalAchs.map(a => `✨ ${a.label}: ${a.desc}`).join('\n');
         }
 
-        return { 
-            success: true, 
+        return {
+            success: true,
             msg: `📅 <b>DAY ${streak} FOCUS COMPLETE</b>\n\nRewards:\n${rewardList}\n\nMaintain your streak for greater power!`,
             streak
         };

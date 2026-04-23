@@ -68,80 +68,89 @@ module.exports = {
     },
 
     async handleSellMenu(ctx) {
-        const msg = ui.formatHeader("CURSED TRADING HUB") + "\n\n" +
-            "<i>\"Every soul has a price. How much is yours worth?\"</i>\n\n" +
-            "Choose your selling method:\n\n" +
-            "• <b>Single Sell:</b> Go to Character Stats to sell individually.\n" +
-            "• <b>Select & Sell:</b> Pick specific spirits to release.\n" +
-            "• <b>Mass Release:</b> Instantly sell all Common spirits (excluding team).";
+        const msg = ui.formatHeader("💰 SPIRIT DISPOSAL", "ROSTER") + "\n\n" +
+            "Release spirits back into the veil to recover Coins and Soul Dust.\n\n" +
+            "• <b>Common:</b> 50 Coins, 10 Dust\n" +
+            "• <b>Rare+:</b> Higher yields based on grade.";
+        
+        const kb = Markup.inlineKeyboard([
+            [Markup.button.callback('🎯 SELECT INDIVIDUALS', 'roster_nav_release')],
+            [Markup.button.callback('🧹 SELL ALL COMMONS', 'roster_nav_release_commons')],
+            [Markup.button.callback('🔥 SELL ALL UNASSIGNED', 'roster_mass_release_all')],
+            [Markup.button.callback('⬅️ BACK', 'cmd_roster')]
+        ]);
 
-        const kb = [
-            [Markup.button.callback('✅ SELECT & SELL', 'roster_nav_release')],
-            [Markup.button.callback('🧹 SELL ALL COMMONS', 'roster_mass_release_commons')],
-            [Markup.button.callback('🔥 SELL ALL (NON-TEAM)', 'roster_mass_release_all')],
-            [Markup.button.callback('⬅️ BACK TO ROSTER', 'cmd_roster')]
-        ];
-
-        return media.smartEdit(ctx, msg, Markup.inlineKeyboard(kb));
+        return media.smartEdit(ctx, msg, kb);
     },
 
-    async handleReleaseMenu(ctx, onlyCommons = false) {
+    async handleReleaseMenu(ctx, filterCommons = false, page = 0) {
         const userId = ctx.from.id;
-        const roster = await db.roster.find({ userId: userId });
         const user = await db.users.findOne({ telegramId: userId });
-        if (!user) return ctx.reply("❌ Please register first using /start.");
+        const roster = await db.roster.find({ userId: userId });
         const teamIds = user.teamIds || [];
-
-        if (!ctx.session.selectedForRelease) ctx.session.selectedForRelease = [];
-
-        let filteredRoster = onlyCommons ? roster.filter(c => {
-            const char = characters[c.charId];
-            return char && char.rarity === 'Common';
-        }) : roster;
         
+        let targets = roster;
+        if (filterCommons) {
+            targets = roster.filter(c => {
+                const char = characters[c.charId];
+                return char && char.rarity === 'Common' && !teamIds.includes(c.charId);
+            });
+        }
+
         // Sort: Non-team first
-        filteredRoster.sort((a, b) => {
+        targets.sort((a, b) => {
             const aInTeam = teamIds.includes(a.charId) ? 1 : 0;
             const bInTeam = teamIds.includes(b.charId) ? 1 : 0;
             return aInTeam - bInTeam;
         });
 
-        const listKb = filteredRoster.slice(0, 10).map(c => {
+        const pageSize = 8;
+        const start = page * pageSize;
+        const visible = targets.slice(start, start + pageSize);
+
+        if (!ctx.session.selectedForRelease) ctx.session.selectedForRelease = [];
+
+        let msg = ui.formatHeader(filterCommons ? "SELL COMMONS" : "SELECT FOR RELEASE") + "\n\n" +
+            `Selected: <b>${ctx.session.selectedForRelease.length}</b> spirits\n\n`;
+
+        const kb = [];
+        visible.forEach(c => {
             const isTeam = teamIds.includes(c.charId);
-            const isSelected = ctx.session.selectedForRelease.includes(c._id.toString());
-            
-            let icon = isTeam ? '🛡️ [TEAM]' : (isSelected ? '✅' : '⚪');
-            let label = `${icon} ${c.charId} (Lvl ${c.level})`;
-            
-            return [Markup.button.callback(label, isTeam ? 'none' : `roster_release_toggle_${c._id}`)];
+            const isSelected = ctx.session.selectedForRelease.includes(c._id);
+            const icon = isTeam ? '🛡️' : (isSelected ? '✅' : '⬜️');
+            const label = `${icon} ${c.charId} (Lvl ${c.level})`;
+            kb.push([Markup.button.callback(label, isTeam ? 'none' : `roster_release_toggle_${c._id}`)]);
         });
 
-        const selectedCount = ctx.session.selectedForRelease.length;
-        const massBtn = selectedCount > 0 
-            ? Markup.button.callback(`🔥 CONFIRM SALE (${selectedCount})`, 'roster_mass_release_selected')
-            : Markup.button.callback(onlyCommons ? '👁️ SHOW ALL' : '👁️ COMMONS ONLY', onlyCommons ? 'roster_nav_release' : 'roster_nav_release_commons');
+        const nav = [];
+        if (page > 0) nav.push(Markup.button.callback('⬅️', `roster_nav_release_${filterCommons ? 'commons_' : ''}page_${page - 1}`));
+        if (start + pageSize < targets.length) nav.push(Markup.button.callback('➡️', `roster_nav_release_${filterCommons ? 'commons_' : ''}page_${page + 1}`));
+        if (nav.length > 0) kb.push(nav);
 
-        const kb = [
-            ...listKb,
-            [massBtn],
-            [Markup.button.callback('⬅️ BACK', 'roster_nav_sell_menu')]
-        ];
+        if (ctx.session.selectedForRelease.length > 0) {
+            kb.push([Markup.button.callback('🔥 CONFIRM RELEASE SELECTED', 'roster_mass_release_selected')]);
+        }
 
-        const title = onlyCommons ? "SELL: COMMONS" : "SELL: SELECTIVE";
-        const subtitle = `<b>Wallet:</b> 💰 ${user.coins} | ✨ ${user.dust || 0}\n\n` +
-            (selectedCount > 0 ? `Selected: <b>${selectedCount}</b> spirits` : "Select spirits to release for Coins & Dust:");
+        if (filterCommons) {
+            kb.push([Markup.button.callback('🧹 SELL ALL COMMONS NOW', 'roster_mass_release_commons')]);
+        }
 
-        return media.smartEdit(ctx, `${ui.formatHeader(title)}\n\n${subtitle}`, Markup.inlineKeyboard(kb));
+        kb.push([Markup.button.callback('⬅️ BACK', 'roster_nav_sell_menu')]);
+
+        return media.smartEdit(ctx, msg, Markup.inlineKeyboard(kb));
     },
 
     async toggleSelectForRelease(ctx, rosterId) {
         if (!ctx.session.selectedForRelease) ctx.session.selectedForRelease = [];
         const idx = ctx.session.selectedForRelease.indexOf(rosterId);
-        if (idx > -1) ctx.session.selectedForRelease.splice(idx, 1);
-        else if (ctx.session.selectedForRelease.length < 10) ctx.session.selectedForRelease.push(rosterId);
-        else return ctx.answerCbQuery("⚠️ Max 10 at once!", { show_alert: true });
-
-        return this.handleReleaseMenu(ctx, false);
+        if (idx > -1) {
+            ctx.session.selectedForRelease.splice(idx, 1);
+        } else {
+            if (ctx.session.selectedForRelease.length >= 10) return ctx.answerCbQuery("⚠️ Max 10 at once!", { show_alert: true });
+            ctx.session.selectedForRelease.push(rosterId);
+        }
+        await ctx.answerCbQuery("Selection updated.");
+        return this.handleReleaseMenu(ctx, false); // Default to false for toggle
     },
 
     async handleMassReleaseSelected(ctx) {
@@ -169,6 +178,8 @@ module.exports = {
         const userId = ctx.from.id;
         const selectedIds = ctx.session.selectedForRelease || [];
         const count = selectedIds.length;
+
+        if (count === 0) return ctx.answerCbQuery("Nothing selected.");
 
         await db.roster.remove({ _id: { $in: selectedIds }, userId }, { multi: true });
         await db.users.update({ telegramId: userId }, { $inc: { coins: count * 50, dust: count * 10 } });
@@ -296,7 +307,7 @@ module.exports = {
         const char = await db.roster.findOne({ _id: rosterId, userId: userId });
         if (!char) return ctx.answerCbQuery("Not owned.");
         
-        await db.roster.remove({ _id: rosterId });
+        await db.roster.remove({ _id: rosterId, userId: userId });
         await db.users.update({ telegramId: userId }, { $inc: { coins: 50, dust: 10 } });
 
         await ctx.answerCbQuery(`🕊 Released ${char.charId}. +50 Coins & +10 Dust!`);
@@ -367,7 +378,6 @@ module.exports = {
         const userId = ctx.from.id;
 
         if (!query) {
-            // Show player's own characters first if they exist
             const roster = await db.roster.find({ userId });
             if (roster.length > 0 && !fromArchive) {
                 return this.handleDetailsNav(ctx);
@@ -386,16 +396,13 @@ module.exports = {
         
         if (!foundKey) return ctx.reply(`❌ Could not find any cursed spirit or sorcerer matching "${query}".`);
         
-        // Ownership Check
         const rosterEntry = await db.roster.findOne({ userId, charId: foundKey });
         const base = characters[foundKey];
 
         if (rosterEntry) {
-            // If owned, use the existing detailed view with upgrades/deployment options
             return this.showCharacterDetails(ctx, rosterEntry._id);
         }
 
-        // Archive View (Not Owned)
         let msg = ui.formatHeader(`ARCHIVE: ${base.name}`) + "\n\n";
         msg += `🏮 <b>STATUS:</b> <i>NOT OWNED</i>\n`;
         msg += `🎭 <b>Rarity:</b> ${base.rarity}\n`;
@@ -448,7 +455,6 @@ module.exports = {
         let msg = ui.formatHeader(`INFO: ${char.charId}`) + "\n\n";
         if (isTeam) msg += "🛡️ <b>[CURRENT TEAM MEMBER]</b>\n\n";
         
-        // Awakening Tag
         if (currentStars > 0) msg += `🌟 <b>AWAKENED ${currentStars}/5: +${currentStars * 15}% STATS</b>\n\n`;
         
         msg += `🎭 <b>Rarity:</b> ${base.rarity}\n` +
@@ -515,7 +521,6 @@ module.exports = {
             return ctx.answerCbQuery(`❌ Not enough shards! You need ${cost} Shards. You have ${availableShards}.`, { show_alert: true });
         }
 
-        // Deduct shards and add star
         user.shards[char.charId] -= cost;
         await db.users.update({ telegramId: userId }, { $set: { shards: user.shards } });
         
@@ -529,15 +534,18 @@ module.exports = {
         const userId = ctx.from.id;
         const user = await db.users.findOne({ telegramId: userId });
         if (!user) return ctx.reply("❌ Please register first.");
+
+        // Check if in battle (since isUserBusy is not imported here, we check manually)
+        if (ctx.session && ctx.session.activeBattle && ctx.session.activeBattle.status === 'ongoing') return ctx.answerCbQuery("⚠️ You cannot deploy characters while in a battle!", { show_alert: true });
+        if (user.activeExplore && (user.activeExplore.status === 'found' || user.activeExplore.status === 'battling')) return ctx.answerCbQuery("⚠️ You cannot deploy characters while in a battle!", { show_alert: true });
+
         let teamIds = user.teamIds || ["Yuji Itadori", "Megumi Fushiguro", "Nobara Kugisaki"];
 
-        // Replace the specific slot
         teamIds[slotIdx] = charId;
         
         await db.users.update({ telegramId: userId }, { $set: { teamIds: teamIds } });
         await ctx.answerCbQuery(`✅ ${charId} deployed to Slot ${parseInt(slotIdx)+1}!`, { show_alert: true });
         
-        // Return to details to see the 🛡️ tag
         const char = await db.roster.findOne({ charId: charId, userId: userId });
         return this.showCharacterDetails(ctx, char._id);
     }

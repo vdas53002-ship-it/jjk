@@ -27,8 +27,8 @@ module.exports = {
         target.friends = target.friends || [];
         target.friends.push({ userId: user.telegramId, username: user.username, status: 'accepted' });
 
-        await db.users.update({ telegramId: user.telegramId }, user);
-        await db.users.update({ telegramId: target.telegramId }, target);
+        await db.users.update({ telegramId: user.telegramId }, { $set: user });
+        await db.users.update({ telegramId: target.telegramId }, { $set: target });
 
         return ctx.replyWithHTML(`🤝 <b>Bond Formed!</b> You and @${target.username} are now friends.`);
     },

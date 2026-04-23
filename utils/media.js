@@ -107,10 +107,11 @@ module.exports = {
                         return;
                     }
 
-                    // Only if the message is actually gone/un-editable do we allow a new message
-                    if (!desc.includes("message can't be edited") && !desc.includes("message to edit not found")) {
-                        console.error("[BATTLE UI] Edit failed but skipping sendPhoto to avoid spam:", desc);
-                        return; // Silent fail to prevent " ek hee cheez baar baar"
+                    // Fallback to sending new photo if edit fails
+                    if (!desc.includes("message is not modified")) {
+                        console.error("[BATTLE UI] Edit failed, attempting fallback sendPhoto:", desc);
+                    } else {
+                        return;
                     }
                 }
             }

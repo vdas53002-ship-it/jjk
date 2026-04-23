@@ -150,7 +150,9 @@ async function renderBattle(ctx) {
         const userId = p1.id;
         const userDoc = await db.users.findOne({ telegramId: userId });
 
-        if (battle.winner === p1.username) {
+        if (battle.surrendered) {
+            rewardMsg = `\n\n🏳️ <b>FLED</b>\nYou abandoned the clash. No rewards were granted.`;
+        } else if (battle.winner === p1.username) {
             if (wildTarget) {
                 const targetChar = characters[wildTarget];
                 const enemyChar = battle.p2.team[0]; 
@@ -218,7 +220,7 @@ async function renderBattle(ctx) {
     ]);
 
     // Send visual turn
-    return media.sendBattleTurn(ctx, battle, p1.id, kb);
+    return media.sendBattleTurn(ctx, battle, p1.id, kb, ctx.chat.id);
 }
 
 trainingScene.action(/start_train_(.+)/, async (ctx) => {
@@ -252,6 +254,7 @@ trainingScene.action(/exec_attack_(.+)/, async (ctx) => {
     const moveIdx = parseInt(ctx.match[1]);
     const battle = ctx.session.activeBattle;
 
+    if (!battle) return ctx.answerCbQuery("❌ Battle session lost. Use /profile to recover.");
     if (battle.processing) return ctx.answerCbQuery("⏳ Action in progress...");
     battle.processing = true;
 
@@ -324,8 +327,10 @@ trainingScene.action('back_to_actions', async (ctx) => {
 });
 
 trainingScene.action('battle_surrender', async (ctx) => {
+    if (!ctx.session.activeBattle) return ctx.answerCbQuery("No active battle.");
     ctx.session.activeBattle.status = 'finished';
     ctx.session.activeBattle.winner = 'AI';
+    ctx.session.activeBattle.surrendered = true;
     return renderBattle(ctx);
 });
 

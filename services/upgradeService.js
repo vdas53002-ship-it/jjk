@@ -1,5 +1,6 @@
 const db = require('../database');
 const items = require('../utils/data/items');
+const characters = require('../utils/data/characters').DATA;
 
 /**
  * Upgrade Service: Handles character stat items, move unlocks, and domain expansions.
@@ -91,14 +92,25 @@ module.exports = {
 
         if (!char || !user) return { success: false, msg: "Data mismatch error." };
 
-        // 1. Calculate Costs
+        // 1. Calculate Costs based on Rarity
+        const RARITY_COSTS = {
+            "Common": 1.0,
+            "Rare": 1.8,
+            "Epic": 3.0,
+            "Legendary": 6.0,
+            "Mythic": 12.0
+        };
+
+        const rarity = char.rarity || (characters[char.charId] ? characters[char.charId].rarity : 'Common');
+        const mult = RARITY_COSTS[rarity] || 1.0;
         const level = char.level || 1;
-        const dustCost = 10 + (level * 5);
-        const coinCost = 100 + (level * 50);
+        
+        const dustCost = Math.floor((10 + (level * 5)) * mult);
+        const coinCost = Math.floor((100 + (level * 50)) * mult);
 
         // 2. Balance Check
-        if ((user.dust || 0) < dustCost) return { success: false, msg: `❌ Not enough Dust! Need ${dustCost}.` };
-        if (user.coins < coinCost) return { success: false, msg: `❌ Not enough Coins! Need ${coinCost}.` };
+        if ((user.dust || 0) < dustCost) return { success: false, msg: `❌ Not enough Dust! ${rarity} upgrade needs ${dustCost}.` };
+        if (user.coins < coinCost) return { success: false, msg: `❌ Not enough Coins! ${rarity} upgrade needs ${coinCost}.` };
 
         // 3. Apply Level Up
         const newLevel = level + 1;
@@ -117,6 +129,51 @@ module.exports = {
             msg: `🎉 <b>${char.charId}</b> reached Level ${newLevel}!\n\n` +
                 `🩸 HP +${hpGain} | 🌀 CE +${ceGain} | ⚔️ ATK +${atkGain}\n` +
                 `💰 Cost: ${coinCost} Coins, ${dustCost} Dust`
+        };
+    },
+
+    async promoteGrade(userId, rosterId) {
+        const char = await db.roster.findOne({ _id: rosterId, userId: userId });
+        const user = await db.users.findOne({ telegramId: userId });
+        
+        if (!char || !user) return { success: false, msg: "Data mismatch error." };
+
+        const GRADES = ["Grade 4", "Grade 3", "Grade 2", "Grade 1", "Special"];
+        const currentIdx = GRADES.indexOf(char.grade || "Grade 4");
+        
+        if (currentIdx === -1 || currentIdx === GRADES.length - 1) {
+            return { success: false, msg: "This sorcerer has already reached the pinnacle (Special Grade)!" };
+        }
+
+        const nextGrade = GRADES[currentIdx + 1];
+        
+        // Define Requirements
+        const REQS = {
+            "Grade 3": { level: 15, coins: 1000, dust: 150 },
+            "Grade 2": { level: 30, coins: 3000, dust: 400 },
+            "Grade 1": { level: 45, coins: 7500, dust: 1000 },
+            "Special": { level: 60, coins: 20000, dust: 2500 }
+        };
+
+        const req = REQS[nextGrade];
+        if (char.level < req.level) return { success: false, msg: `❌ Needs Level ${req.level} to promote to ${nextGrade}.` };
+        if (user.coins < req.coins) return { success: false, msg: `❌ Needs ${req.coins} Coins.` };
+        if ((user.dust || 0) < req.dust) return { success: false, msg: `❌ Needs ${req.dust} Dust.` };
+
+        // Apply Promotion
+        const hpBonus = 50 * (currentIdx + 1);
+        const atkBonus = 10 * (currentIdx + 1);
+
+        await db.users.update({ telegramId: userId }, { $inc: { coins: -req.coins, dust: -req.dust } });
+        await db.roster.update({ _id: rosterId }, { 
+            $set: { grade: nextGrade },
+            $inc: { hp: hpBonus, maxHp: hpBonus, atk: atkBonus }
+        });
+
+        return { 
+            success: true, 
+            msg: `🎖 <b>PROMOTION SUCCESSFUL!</b>\n\n<b>${char.charId}</b> is now a <b>${nextGrade} Sorcerer</b>!\n\n` +
+                 `🩸 HP +${hpBonus} | ⚔️ ATK +${atkBonus}`
         };
     }
 };

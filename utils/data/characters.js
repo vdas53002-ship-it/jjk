@@ -45,6 +45,7 @@ const DATA = {
     "Larue Low": { rarity: "Common", grade: "Grade 2", type: "Close-range" },
     "Miguel Low": { rarity: "Common", grade: "Grade 1", type: "Close-range" },
     "Akari Nitta": { rarity: "Common", grade: "Grade 4", type: "Barrier" },
+    "Active Panda": { rarity: "Rare", grade: "Grade 2", type: "Close-range" },
 
     // --- RARE (30 Characters) ---
     "Yuji Itadori Early": { rarity: "Rare", grade: "Grade 2", type: "Close-range" },
@@ -165,6 +166,12 @@ const CUSTOM_MOVES = {
         { name: "Emergency First Aid", dmg: [0, 0], ce: 10, type: "Barrier", effect: { type: "heal", val: 0.1 } },
         { name: "Auxiliary Barrier", dmg: [0, 0], ce: 5, type: "Barrier", effect: { type: "buff", stat: "def", val: 0.7 } },
         { name: "Panic Strike", dmg: [1, 1], ce: 0, type: "Close-range" }
+    ],
+    "Active Panda": [
+        { name: "Panda Tackle", dmg: [1, 1], ce: 5, type: "Close-range" },
+        { name: "Bamboo Swing", dmg: [1, 1], ce: 0, type: "Close-range" },
+        { name: "Resilient Fur", dmg: [0, 0], ce: 10, type: "Barrier", effect: { type: "buff", stat: "def", val: 1.2 } },
+        { name: "Gorilla Mode", dmg: [0, 0], ce: 20, type: "Barrier", effect: { type: "buff", stat: "atk", val: 1.6 } }
     ],
 
     // --- COMMON (Curses) ---
@@ -418,7 +425,11 @@ const ALIASES = {
     "Kirara": "Kirara Hoshi",
     "Gakuganji": "Yoshinobu Gakuganji",
     "Utahime": "Utahime Iori",
-    "Muta": "Kokichi Muta"
+    "Muta": "Kokichi Muta",
+    "Momo": "Momo Nishimiya",
+    "Noritoshi": "Noritoshi Kamo Full",
+    "Sukuna20F": "Sukuna 20F",
+    "AwakenedGojo": "Awakened Gojo"
 };
 
 for (const k in DATA) {
